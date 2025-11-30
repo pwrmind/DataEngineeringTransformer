@@ -79,30 +79,37 @@
                             <h5 class="mb-0"><i class="fas fa-database me-2"></i>Data Loader</h5>
                         </div>
                         <div class="card-body">
-                            <div class="row g-2">
-                                <div class="col-md-8">
+                            <div class="row g-2 mb-3">
+                                <div class="col-md-6">
+                                    <label class="form-label small">Upload JSON File</label>
+                                    <input type="file" class="form-control form-control-sm" @change="handleFileUpload($event)" accept=".json">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small">Or paste JSON</label>
                                     <textarea 
                                         x-model="jsonInput" 
                                         class="form-control form-control-sm" 
-                                        rows="4" 
-                                        placeholder='Paste JSON array here, e.g.: [{"id": 1, "name": "John"}, {"id": 2, "name": "Jane"}]'
+                                        rows="3" 
+                                        placeholder='[{"id": 1, "name": "John"}]'
                                     ></textarea>
                                 </div>
-                                <div class="col-md-4">
-                                    <div class="d-grid gap-2">
-                                        <button 
-                                            @click="loadCustomData(jsonInput)" 
-                                            class="btn btn-sm btn-primary"
-                                        >
-                                            <i class="fas fa-upload me-1"></i>Load Data
-                                        </button>
-                                        <button 
-                                            @click="jsonInput = JSON.stringify(originalData, null, 2)" 
-                                            class="btn btn-sm btn-outline-secondary"
-                                        >
-                                            <i class="fas fa-redo me-1"></i>Reset to Sample
-                                        </button>
-                                    </div>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <button 
+                                        @click="loadCustomData(jsonInput)" 
+                                        class="btn btn-sm btn-primary w-100"
+                                    >
+                                        <i class="fas fa-upload me-1"></i>Load from Text
+                                    </button>
+                                </div>
+                                <div class="col-md-6">
+                                    <button 
+                                        @click="jsonInput = JSON.stringify(originalData, null, 2)" 
+                                        class="btn btn-sm btn-outline-secondary w-100"
+                                    >
+                                        <i class="fas fa-redo me-1"></i>Reset to Sample
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -113,7 +120,7 @@
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">
                                 <i class="fas fa-table me-2"></i>Data Preview 
-                                <small class="text-muted">(Showing first <span x-text="currentData.length"></span> items)</small>
+                                <small class="text-muted">(Showing <span x-text="currentData.length"></span> items)</small>
                             </h5>
                             <div>
                                 <button class="btn btn-sm btn-outline-primary me-1" @click="copyToClipboard()">
@@ -153,12 +160,7 @@
             <!-- Система шагов трансформации -->
             <div class="row mt-4">
                 <div class="col-12">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5><i class="fas fa-cogs me-2"></i>Transformation Pipeline</h5>
-                        <button class="btn btn-sm btn-success" @click="addStep()">
-                            <i class="fas fa-plus me-1"></i>Add Step
-                        </button>
-                    </div>
+                    <h5><i class="fas fa-cogs me-2"></i>Transformation Pipeline</h5>
 
                     <!-- Контейнер для шагов трансформации -->
                     <div id="transformationSteps">
@@ -250,6 +252,13 @@
                                 </div>
                             </div>
                         </template>
+                        
+                        <!-- Кнопка добавления шага ПОД всеми шагами -->
+                        <div class="text-center mt-3">
+                            <button class="btn btn-sm btn-success" @click="addStep()">
+                                <i class="fas fa-plus me-1"></i>Add Transformation Step
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -323,6 +332,27 @@
                     this.showNotification('Data loaded successfully!', 'success');
                 },
 
+                // Обработка загрузки файла
+                handleFileUpload(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        try {
+                            this.jsonInput = e.target.result;
+                            this.loadCustomData(e.target.result);
+                            this.showNotification('File loaded successfully!', 'success');
+                        } catch (error) {
+                            this.showNotification('Error reading file: ' + error.message, 'error');
+                        }
+                    };
+                    reader.onerror = () => {
+                        this.showNotification('Error reading file', 'error');
+                    };
+                    reader.readAsText(file);
+                },
+
                 // Валидация JSON
                 validateJSON(jsonString) {
                     try {
@@ -372,7 +402,6 @@
                 // Получение панели параметров
                 getParameterPanel(step, index) {
                     const method = step.method;
-                    const params = step.parameters;
                     
                     const panels = {
                         map: `
@@ -508,13 +537,23 @@
                     return this.pipelineSteps[index - 1].result !== null;
                 },
 
-                // Выполнение шага
+                // Выполнение шага (с иммутабельностью)
                 executeStep(index) {
                     try {
                         const step = this.pipelineSteps[index];
-                        const inputData = index === 0 ? this.originalData : this.pipelineSteps[index - 1].result;
                         
-                        if (!inputData || inputData.length === 0) {
+                        // Создаем глубокую копию данных предыдущего шага
+                        let inputData;
+                        if (index === 0) {
+                            inputData = JSON.parse(JSON.stringify(this.originalData));
+                        } else {
+                            const prevResult = this.pipelineSteps[index - 1].result;
+                            inputData = Array.isArray(prevResult) 
+                                ? JSON.parse(JSON.stringify(prevResult))
+                                : prevResult;
+                        }
+                        
+                        if (!inputData || (Array.isArray(inputData) && inputData.length === 0)) {
                             throw new Error('No input data available');
                         }
 
@@ -548,8 +587,10 @@
                         step.result = result;
                         step.error = null;
                         
-                        // Обновляем текущие результаты
-                        this.currentResults[index] = Array.isArray(result) ? result : [result];
+                        // Сохраняем результат (уже иммутабельный)
+                        this.currentResults[index] = Array.isArray(result) 
+                            ? JSON.parse(JSON.stringify(result)) 
+                            : result;
                         
                         // Пересчитываем последующие шаги
                         this.recalculateSubsequentSteps(index);
@@ -648,9 +689,12 @@
                     this.updatePipelineVisualization();
                 },
 
-                // Обновление D3 визуализации
+                // Обновление D3 визуализации (исправленное выравнивание)
                 updatePipelineVisualization() {
-                    const width = document.getElementById('pipelineChart').clientWidth;
+                    const container = document.getElementById('pipelineChart');
+                    if (!container) return;
+                    
+                    const width = container.clientWidth;
                     const height = 120;
                     
                     // Очищаем предыдущую визуализацию
@@ -669,7 +713,8 @@
                         id: 'source',
                         name: 'Source Data',
                         type: 'source',
-                        count: this.originalData.length
+                        count: this.originalData.length,
+                        result: this.originalData
                     });
                     
                     // Узлы для каждого шага
@@ -684,13 +729,27 @@
                         });
                     });
                     
-                    // Рассчитываем позиции
+                    // Рассчитываем общую ширину и центрируем
                     const nodeWidth = 120;
                     const nodeHeight = 60;
                     const horizontalSpacing = 40;
+                    const totalWidth = nodes.length * (nodeWidth + horizontalSpacing) - horizontalSpacing;
+                    const startX = (width - totalWidth) / 2;
                     
-                    const startX = 20;
                     let currentX = startX;
+                    
+                    // Добавляем маркер для стрелок
+                    svg.append('defs').append('marker')
+                        .attr('id', 'arrowhead')
+                        .attr('viewBox', '0 -5 10 10')
+                        .attr('refX', 8)
+                        .attr('refY', 0)
+                        .attr('markerWidth', 6)
+                        .attr('markerHeight', 6)
+                        .attr('orient', 'auto')
+                        .append('path')
+                        .attr('d', 'M0,-5L10,0L0,5')
+                        .attr('fill', '#6c757d');
                     
                     // Рисуем соединения
                     for (let i = 0; i < nodes.length - 1; i++) {
@@ -723,7 +782,6 @@
                             .style('cursor', 'pointer')
                             .on('click', () => {
                                 if (node.type === 'step') {
-                                    // Прокручиваем к соответствующему шагу
                                     const element = document.querySelector(`[x-data] .transformation-block:nth-child(${node.index + 1})`);
                                     if (element) {
                                         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -759,9 +817,20 @@
                             .text(node.name.length > 15 ? node.name.substring(0, 15) + '...' : node.name);
                         
                         // Информация о данных
-                        const dataInfo = node.type === 'source' ? 
-                            `${node.count} items` : 
-                            (node.result ? (Array.isArray(node.result) ? `${node.result.length} items` : 'result') : 'not executed');
+                        let dataInfo;
+                        if (node.type === 'source') {
+                            dataInfo = `${node.count} items`;
+                        } else {
+                            if (node.result === null) {
+                                dataInfo = 'not executed';
+                            } else if (Array.isArray(node.result)) {
+                                dataInfo = `${node.result.length} items`;
+                            } else {
+                                dataInfo = typeof node.result === 'string' 
+                                    ? (node.result.length > 10 ? node.result.substring(0, 10) + '...' : node.result)
+                                    : String(node.result);
+                            }
+                        }
                         
                         group.append('text')
                             .attr('text-anchor', 'middle')
@@ -773,19 +842,6 @@
                         
                         currentX += nodeWidth + horizontalSpacing;
                     });
-                    
-                    // Добавляем маркер для стрелок
-                    svg.append('defs').append('marker')
-                        .attr('id', 'arrowhead')
-                        .attr('viewBox', '0 -5 10 10')
-                        .attr('refX', 8)
-                        .attr('refY', 0)
-                        .attr('markerWidth', 6)
-                        .attr('markerHeight', 6)
-                        .attr('orient', 'auto')
-                        .append('path')
-                        .attr('d', 'M0,-5L10,0L0,5')
-                        .attr('fill', '#6c757d');
                 },
 
                 // Экспорт данных
