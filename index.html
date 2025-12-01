@@ -57,10 +57,20 @@
         .node:hover {
             opacity: 0.8;
         }
+        .alert-custom {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            max-width: 400px;
+        }
     </style>
 </head>
 <body>
-    <div id="app" x-data="app()">
+    <div id="app" x-data="app()" x-init="init()">
+        <!-- Уведомления -->
+        <div id="notificationContainer" class="alert-custom"></div>
+
         <!-- Визуализация пайплайна -->
         <div class="container-sm mt-3">
             <div class="pipeline-visualization">
@@ -99,13 +109,14 @@
                                     <button 
                                         @click="loadCustomData(jsonInput)" 
                                         class="btn btn-sm btn-primary w-100"
+                                        :disabled="!jsonInput.trim()"
                                     >
                                         <i class="fas fa-upload me-1"></i>Load from Text
                                     </button>
                                 </div>
                                 <div class="col-md-6">
                                     <button 
-                                        @click="jsonInput = JSON.stringify(originalData, null, 2)" 
+                                        @click="resetToSample()" 
                                         class="btn btn-sm btn-outline-secondary w-100"
                                     >
                                         <i class="fas fa-redo me-1"></i>Reset to Sample
@@ -142,15 +153,20 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <template x-for="(item, index) in currentData" :key="index">
+                                        <template x-for="(item, index) in currentData.slice(0, 100)" :key="index">
                                             <tr>
                                                 <template x-for="(value, key) in item" :key="key">
-                                                    <td x-text="value"></td>
+                                                    <td>
+                                                        <span x-text="typeof value === 'object' ? JSON.stringify(value) : value"></span>
+                                                    </td>
                                                 </template>
                                             </tr>
                                         </template>
                                     </tbody>
                                 </table>
+                                <div x-show="currentData.length > 100" class="p-2 text-center text-muted">
+                                    <small>Showing first 100 of <span x-text="currentData.length"></span> items</small>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -170,7 +186,7 @@
                                     <div class="step-number" x-text="index + 1"></div>
                                     <div class="flex-grow-1">
                                         <h6 class="mb-1" x-text="'Step ' + (index + 1) + ': ' + step.method"></h6>
-                                        <small class="text-muted" x-text="'Input: ' + (currentResults[index] ? currentResults[index].length : 0) + ' items'"></small>
+                                        <small class="text-muted" x-text="'Input: ' + (getStepInput(index).length || 0) + ' items'"></small>
                                     </div>
                                     <div>
                                         <button class="btn btn-sm btn-outline-danger" @click="removeStep(index)">
@@ -186,7 +202,7 @@
                                         <select 
                                             class="form-select form-select-sm" 
                                             x-model="step.method"
-                                            @change="step.parameters = getDefaultParameters(step.method)"
+                                            @change="onMethodChange(index)"
                                         >
                                             <option value="map">Map</option>
                                             <option value="filter">Filter</option>
@@ -204,7 +220,141 @@
                                 </div>
 
                                 <!-- Динамическая панель параметров -->
-                                <div x-html="getParameterPanel(step, index)"></div>
+                                <div>
+                                    <!-- Map -->
+                                    <template x-if="step.method === 'map'">
+                                        <div class="row g-2">
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">Source Field (optional)</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.sourceField" 
+                                                       placeholder="fieldName">
+                                            </div>
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">Expression</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.expression" 
+                                                       placeholder="item * 2">
+                                            </div>
+                                            <div class="col-12">
+                                                <small class="text-muted">
+                                                    Use <code>item</code> to reference current element. Example: <code>item.age * 2</code>
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Filter -->
+                                    <template x-if="step.method === 'filter'">
+                                        <div class="row g-2">
+                                            <div class="col-12">
+                                                <label class="form-label small">Condition</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.condition" 
+                                                       placeholder="item.age > 25">
+                                                <small class="text-muted">
+                                                    Use <code>item</code> to reference current element. Example: <code>item.active && item.age > 30</code>
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Reduce -->
+                                    <template x-if="step.method === 'reduce'">
+                                        <div class="row g-2">
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">Initial Value</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.initialValue" 
+                                                       placeholder='0, "[]", "{}"'>
+                                            </div>
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">Reducer Function</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.reducerFunction" 
+                                                       placeholder="acc + item.age">
+                                            </div>
+                                            <div class="col-12">
+                                                <small class="text-muted">
+                                                    Use <code>acc</code> for accumulator and <code>item</code> for current element. Example: <code>acc + item.value</code>
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- FlatMap -->
+                                    <template x-if="step.method === 'flatMap'">
+                                        <div class="row g-2">
+                                            <div class="col-12">
+                                                <label class="form-label small">Expression</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.expression" 
+                                                       placeholder="item.phones">
+                                                <small class="text-muted">
+                                                    Should return an array. Example: <code>item.phoneNumbers</code>
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Slice -->
+                                    <template x-if="step.method === 'slice'">
+                                        <div class="row g-2">
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">Start Index</label>
+                                                <input type="number" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.start" 
+                                                       placeholder="0" min="0">
+                                            </div>
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">End Index (optional)</label>
+                                                <input type="number" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.end" 
+                                                       placeholder="10" min="0">
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Concat -->
+                                    <template x-if="step.method === 'concat'">
+                                        <div class="row g-2">
+                                            <div class="col-12">
+                                                <label class="form-label small">Array to Concatenate</label>
+                                                <textarea class="form-control form-control-sm" 
+                                                          x-model="step.parameters.arrayToConcat" 
+                                                          rows="2" 
+                                                          placeholder='[{"id": 6, "name": "Frank"}]'></textarea>
+                                                <small class="text-muted">
+                                                    Enter valid JSON array
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </template>
+
+                                    <!-- Join -->
+                                    <template x-if="step.method === 'join'">
+                                        <div class="row g-2">
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">Separator</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.separator" 
+                                                       placeholder=",">
+                                            </div>
+                                            <div class="col-sm-6">
+                                                <label class="form-label small">Source Field (optional)</label>
+                                                <input type="text" class="form-control form-control-sm" 
+                                                       x-model="step.parameters.sourceField" 
+                                                       placeholder="name">
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+
+                                <!-- Отображение ошибки -->
+                                <div x-show="step.error" class="alert alert-danger alert-dismissible fade show mt-2 p-2" role="alert">
+                                    <small><strong>Error:</strong> <span x-text="step.error"></span></small>
+                                    <button type="button" class="btn-close" style="font-size: 0.5rem;" @click="step.error = null"></button>
+                                </div>
 
                                 <!-- Кнопка применения и результат -->
                                 <div class="row align-items-center mt-3">
@@ -219,7 +369,7 @@
                                     </div>
                                     <div class="col-auto">
                                         <small class="text-muted" 
-                                               x-text="step.result ? 'Output: ' + (Array.isArray(step.result) ? step.result.length + ' items' : step.result) : ''">
+                                               x-text="step.result ? 'Output: ' + (Array.isArray(step.result) ? step.result.length + ' items' : typeof step.result === 'string' ? (step.result.length > 50 ? step.result.substring(0, 50) + '...' : step.result) : step.result) : ''">
                                         </small>
                                     </div>
                                 </div>
@@ -239,7 +389,7 @@
                                                 <template x-for="(item, itemIndex) in step.result.slice(0, 5)" :key="itemIndex">
                                                     <tr>
                                                         <template x-for="(value, key) in item" :key="key">
-                                                            <td x-text="value"></td>
+                                                            <td x-text="typeof value === 'object' ? JSON.stringify(value) : value"></td>
                                                         </template>
                                                     </tr>
                                                 </template>
@@ -255,8 +405,9 @@
                         
                         <!-- Кнопка добавления шага ПОД всеми шагами -->
                         <div class="text-center mt-3">
-                            <button class="btn btn-sm btn-success" @click="addStep()">
+                            <button class="btn btn-sm btn-success" @click="addStep()" :disabled="pipelineSteps.length >= 20">
                                 <i class="fas fa-plus me-1"></i>Add Transformation Step
+                                <span x-show="pipelineSteps.length >= 20" class="ms-1">(Max 20)</span>
                             </button>
                         </div>
                     </div>
@@ -283,20 +434,24 @@
                 // Шаги трансформации
                 pipelineSteps: [],
                 
-                // Результаты после каждого шага
-                currentResults: [],
-                
                 // Следующий ID для шага
                 nextStepId: 1,
                 
                 // JSON input
                 jsonInput: '',
                 
+                // История для undo/redo
+                history: [],
+                historyIndex: -1,
+                isSaved: false,
+
                 // Текущие данные для отображения (последний шаг)
                 get currentData() {
-                    return this.currentResults.length > 0 
-                        ? this.currentResults[this.currentResults.length - 1] 
-                        : [];
+                    if (this.pipelineSteps.length === 0) {
+                        return this.originalData;
+                    }
+                    const lastStep = this.pipelineSteps[this.pipelineSteps.length - 1];
+                    return lastStep.result || this.originalData;
                 },
 
                 // Инициализация тестовыми данными
@@ -309,11 +464,18 @@
                         { id: 4, name: "Diana", age: 28, city: "Paris", active: true },
                         { id: 5, name: "Eve", age: 32, city: "Berlin", active: false }
                     ];
-                    this.currentResults = [JSON.parse(JSON.stringify(this.originalData))];
                     this.jsonInput = JSON.stringify(this.originalData, null, 2);
                     
                     // Инициализация D3 визуализации
                     this.initPipelineVisualization();
+                    
+                    // Предупреждение при закрытии
+                    window.addEventListener('beforeunload', (e) => {
+                        if (this.pipelineSteps.length > 0) {
+                            e.preventDefault();
+                            e.returnValue = 'You have unsaved transformations. Are you sure you want to leave?';
+                        }
+                    });
                 },
 
                 // Загрузка пользовательских данных
@@ -325,11 +487,17 @@
                     }
                     
                     this.originalData = validation.data;
-                    this.currentResults = [JSON.parse(JSON.stringify(this.originalData))];
                     this.pipelineSteps = [];
                     this.nextStepId = 1;
                     this.updatePipelineVisualization();
+                    this.saveToHistory();
                     this.showNotification('Data loaded successfully!', 'success');
+                },
+
+                // Сброс к примеру данных
+                resetToSample() {
+                    this.jsonInput = JSON.stringify(this.originalData, null, 2);
+                    this.loadCustomData(this.jsonInput);
                 },
 
                 // Обработка загрузки файла
@@ -337,18 +505,33 @@
                     const file = event.target.files[0];
                     if (!file) return;
                     
+                    // Проверяем размер файла (макс 5MB)
+                    if (file.size > 5 * 1024 * 1024) {
+                        this.showNotification('File size must be less than 5MB', 'error');
+                        event.target.value = '';
+                        return;
+                    }
+                    
+                    // Проверяем тип файла
+                    if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+                        this.showNotification('Only JSON files are allowed', 'error');
+                        event.target.value = '';
+                        return;
+                    }
+                    
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         try {
                             this.jsonInput = e.target.result;
                             this.loadCustomData(e.target.result);
-                            this.showNotification('File loaded successfully!', 'success');
                         } catch (error) {
                             this.showNotification('Error reading file: ' + error.message, 'error');
                         }
+                        event.target.value = '';
                     };
                     reader.onerror = () => {
                         this.showNotification('Error reading file', 'error');
+                        event.target.value = '';
                     };
                     reader.readAsText(file);
                 },
@@ -360,14 +543,32 @@
                         if (!Array.isArray(parsed)) {
                             return { isValid: false, error: 'Data must be a JSON array' };
                         }
+                        // Ограничиваем размер данных
+                        if (parsed.length > 10000) {
+                            return { isValid: false, error: 'Maximum 10,000 items allowed' };
+                        }
                         return { isValid: true, data: parsed };
                     } catch (error) {
                         return { isValid: false, error: 'Invalid JSON format' };
                     }
                 },
 
+                // Получение входных данных для шага
+                getStepInput(index) {
+                    if (index === 0) {
+                        return this.originalData;
+                    }
+                    const prevResult = this.pipelineSteps[index - 1].result;
+                    return Array.isArray(prevResult) ? prevResult : [];
+                },
+
                 // Добавление шага
                 addStep() {
+                    if (this.pipelineSteps.length >= 20) {
+                        this.showNotification('Maximum 20 transformation steps allowed', 'error');
+                        return;
+                    }
+                    
                     this.pipelineSteps.push({
                         id: this.nextStepId++,
                         method: 'map',
@@ -376,13 +577,22 @@
                         result: null,
                         error: null
                     });
+                    this.saveToHistory();
+                },
+
+                // Изменение метода шага
+                onMethodChange(index) {
+                    this.pipelineSteps[index].parameters = this.getDefaultParameters(this.pipelineSteps[index].method);
+                    this.pipelineSteps[index].result = null;
+                    this.pipelineSteps[index].error = null;
+                    this.saveToHistory();
                 },
 
                 // Удаление шага
                 removeStep(index) {
                     this.pipelineSteps.splice(index, 1);
-                    // Пересчитываем результаты для оставшихся шагов
                     this.recalculatePipeline();
+                    this.saveToHistory();
                 },
 
                 // Получение параметров по умолчанию для метода
@@ -396,167 +606,25 @@
                         concat: { arrayToConcat: '[]' },
                         join: { separator: ',', sourceField: '' }
                     };
-                    return { ...defaults[method] };
-                },
-
-                // Получение панели параметров
-                getParameterPanel(step, index) {
-                    const method = step.method;
-                    
-                    const panels = {
-                        map: `
-                            <div class="row g-2">
-                                <div class="col-sm-6">
-                                    <label class="form-label small">Source Field (optional)</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.sourceField" 
-                                           placeholder="fieldName">
-                                </div>
-                                <div class="col-sm-6">
-                                    <label class="form-label small">Expression</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.expression" 
-                                           placeholder="item * 2">
-                                </div>
-                                <div class="col-12">
-                                    <small class="text-muted">
-                                        Use <code>item</code> to reference current element. Example: <code>item.age * 2</code>
-                                    </small>
-                                </div>
-                            </div>
-                        `,
-                        
-                        filter: `
-                            <div class="row g-2">
-                                <div class="col-12">
-                                    <label class="form-label small">Condition</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.condition" 
-                                           placeholder="item.age > 25">
-                                    <small class="text-muted">
-                                        Use <code>item</code> to reference current element. Example: <code>item.active && item.age > 30</code>
-                                    </small>
-                                </div>
-                            </div>
-                        `,
-                        
-                        reduce: `
-                            <div class="row g-2">
-                                <div class="col-sm-6">
-                                    <label class="form-label small">Initial Value</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.initialValue" 
-                                           placeholder='0, "[]", "{}"'>
-                                </div>
-                                <div class="col-sm-6">
-                                    <label class="form-label small">Reducer Function</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.reducerFunction" 
-                                           placeholder="acc + item.age">
-                                </div>
-                                <div class="col-12">
-                                    <small class="text-muted">
-                                        Use <code>acc</code> for accumulator and <code>item</code> for current element. Example: <code>acc + item.value</code>
-                                    </small>
-                                </div>
-                            </div>
-                        `,
-                        
-                        flatMap: `
-                            <div class="row g-2">
-                                <div class="col-12">
-                                    <label class="form-label small">Expression</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.expression" 
-                                           placeholder="item.phones">
-                                    <small class="text-muted">
-                                        Should return an array. Example: <code>item.phoneNumbers</code>
-                                    </small>
-                                </div>
-                            </div>
-                        `,
-                        
-                        slice: `
-                            <div class="row g-2">
-                                <div class="col-sm-6">
-                                    <label class="form-label small">Start Index</label>
-                                    <input type="number" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.start" 
-                                           placeholder="0">
-                                </div>
-                                <div class="col-sm-6">
-                                    <label class="form-label small">End Index (optional)</label>
-                                    <input type="number" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.end" 
-                                           placeholder="10">
-                                </div>
-                            </div>
-                        `,
-                        
-                        concat: `
-                            <div class="row g-2">
-                                <div class="col-12">
-                                    <label class="form-label small">Array to Concatenate</label>
-                                    <textarea class="form-control form-control-sm" 
-                                              x-model="pipelineSteps[${index}].parameters.arrayToConcat" 
-                                              rows="2" 
-                                              placeholder='[{"id": 6, "name": "Frank"}]'></textarea>
-                                    <small class="text-muted">
-                                        Enter valid JSON array
-                                    </small>
-                                </div>
-                            </div>
-                        `,
-                        
-                        join: `
-                            <div class="row g-2">
-                                <div class="col-sm-6">
-                                    <label class="form-label small">Separator</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.separator" 
-                                           placeholder=",">
-                                </div>
-                                <div class="col-sm-6">
-                                    <label class="form-label small">Source Field (optional)</label>
-                                    <input type="text" class="form-control form-control-sm" 
-                                           x-model="pipelineSteps[${index}].parameters.sourceField" 
-                                           placeholder="name">
-                                </div>
-                            </div>
-                        `
-                    };
-                    
-                    return panels[method] || '<div>Unknown method</div>';
+                    return JSON.parse(JSON.stringify(defaults[method]));
                 },
 
                 // Проверка возможности выполнения шага
                 isStepExecutable(index) {
-                    if (index === 0) {
-                        return this.originalData.length > 0;
-                    }
-                    return this.pipelineSteps[index - 1].result !== null;
+                    const inputData = this.getStepInput(index);
+                    return Array.isArray(inputData) && inputData.length > 0;
                 },
 
-                // Выполнение шага (с иммутабельностью)
+                // Выполнение шага
                 executeStep(index) {
                     try {
                         const step = this.pipelineSteps[index];
+                        const inputData = this.getStepInput(index);
                         
-                        // Создаем глубокую копию данных предыдущего шага
-                        let inputData;
-                        if (index === 0) {
-                            inputData = JSON.parse(JSON.stringify(this.originalData));
-                        } else {
-                            const prevResult = this.pipelineSteps[index - 1].result;
-                            inputData = Array.isArray(prevResult) 
-                                ? JSON.parse(JSON.stringify(prevResult))
-                                : prevResult;
-                        }
+                        // Валидация параметров
+                        this.validateStepParameters(step);
                         
-                        if (!inputData || (Array.isArray(inputData) && inputData.length === 0)) {
-                            throw new Error('No input data available');
-                        }
-
+                        // Выполнение метода
                         let result;
                         switch (step.method) {
                             case 'map':
@@ -587,56 +655,159 @@
                         step.result = result;
                         step.error = null;
                         
-                        // Сохраняем результат (уже иммутабельный)
-                        this.currentResults[index] = Array.isArray(result) 
-                            ? JSON.parse(JSON.stringify(result)) 
-                            : result;
-                        
                         // Пересчитываем последующие шаги
                         this.recalculateSubsequentSteps(index);
                         this.updatePipelineVisualization();
+                        this.saveToHistory();
                         
                     } catch (error) {
                         this.pipelineSteps[index].error = error.message;
-                        console.error('Execution error:', error);
                         this.showNotification(`Error in step ${index + 1}: ${error.message}`, 'error');
                     }
+                },
+
+                // Валидация параметров шага
+                validateStepParameters(step) {
+                    const { method, parameters } = step;
+                    
+                    switch (method) {
+                        case 'slice':
+                            const start = parseInt(parameters.start);
+                            if (isNaN(start) || start < 0) {
+                                throw new Error('Start must be a positive number');
+                            }
+                            if (parameters.end && (parseInt(parameters.end) < start)) {
+                                throw new Error('End must be greater than start');
+                            }
+                            break;
+                            
+                        case 'reduce':
+                            try {
+                                JSON.parse(parameters.initialValue);
+                            } catch {
+                                throw new Error('Initial value must be valid JSON');
+                            }
+                            break;
+                            
+                        case 'concat':
+                            try {
+                                const parsed = JSON.parse(parameters.arrayToConcat);
+                                if (!Array.isArray(parsed)) {
+                                    throw new Error('Must be a valid array');
+                                }
+                            } catch (error) {
+                                throw new Error(`Invalid array format: ${error.message}`);
+                            }
+                            break;
+                    }
+                },
+
+                // Безопасное выполнение выражения
+                safeEval(expression, context) {
+                    // Создаем безопасный контекст
+                    const safeContext = {
+                        Math: Math,
+                        JSON: JSON,
+                        Date: Date,
+                        String: String,
+                        Number: Number,
+                        Boolean: Boolean,
+                        Array: Array,
+                        Object: Object,
+                        ...context
+                    };
+                    
+                    // Создаем функцию с ограниченным доступом
+                    const func = new Function(...Object.keys(safeContext), 
+                        `"use strict"; 
+                        try {
+                            return ${this.sanitizeExpression(expression)};
+                        } catch(e) {
+                            throw new Error('Expression error: ' + e.message);
+                        }`);
+                    
+                    return func(...Object.values(safeContext));
+                },
+
+                // Санитизация выражения
+                sanitizeExpression(expr) {
+                    const dangerousPatterns = [
+                        /eval\s*\(/gi,
+                        /Function\s*\(/gi,
+                        /setTimeout\s*\(/gi,
+                        /setInterval\s*\(/gi,
+                        /document\./gi,
+                        /window\./gi,
+                        /localStorage/gi,
+                        /sessionStorage/gi,
+                        /fetch\s*\(/gi,
+                        /XMLHttpRequest/gi,
+                        /import\s*/gi,
+                        /require\s*\(/gi,
+                        /process\./gi,
+                        /__proto__/gi,
+                        /constructor/gi,
+                        /prototype/gi
+                    ];
+                    
+                    for (const pattern of dangerousPatterns) {
+                        if (pattern.test(expr)) {
+                            throw new Error('Expression contains forbidden code');
+                        }
+                    }
+                    
+                    return expr;
                 },
 
                 // Методы выполнения трансформаций
                 executeMap(data, params) {
                     const { sourceField, expression } = params;
                     return data.map(item => {
-                        const value = sourceField ? item[sourceField] : item;
-                        // Безопасное выполнение выражения
-                        const func = new Function('item', `return ${expression}`);
-                        return func(value);
+                        try {
+                            const value = sourceField ? item[sourceField] : item;
+                            return this.safeEval(expression, { item: value });
+                        } catch (error) {
+                            throw new Error(`Map error: ${error.message}`);
+                        }
                     });
                 },
 
                 executeFilter(data, params) {
                     const { condition } = params;
                     return data.filter(item => {
-                        const func = new Function('item', `return ${condition}`);
-                        return func(item);
+                        try {
+                            return this.safeEval(condition, { item });
+                        } catch (error) {
+                            throw new Error(`Filter error: ${error.message}`);
+                        }
                     });
                 },
 
                 executeReduce(data, params) {
                     const { initialValue, reducerFunction } = params;
-                    const initial = JSON.parse(initialValue);
-                    return data.reduce((acc, item) => {
-                        const func = new Function('acc', 'item', `return ${reducerFunction}`);
-                        return func(acc, item);
-                    }, initial);
+                    try {
+                        const initial = JSON.parse(initialValue);
+                        return data.reduce((acc, item) => {
+                            try {
+                                return this.safeEval(reducerFunction, { acc, item });
+                            } catch (error) {
+                                throw new Error(`Reducer error: ${error.message}`);
+                            }
+                        }, initial);
+                    } catch (error) {
+                        throw new Error(`Invalid initial value: ${error.message}`);
+                    }
                 },
 
                 executeFlatMap(data, params) {
                     const { expression } = params;
                     return data.flatMap(item => {
-                        const func = new Function('item', `return ${expression}`);
-                        const result = func(item);
-                        return Array.isArray(result) ? result : [result];
+                        try {
+                            const result = this.safeEval(expression, { item });
+                            return Array.isArray(result) ? result : [result];
+                        } catch (error) {
+                            throw new Error(`FlatMap error: ${error.message}`);
+                        }
                     });
                 },
 
@@ -654,7 +825,7 @@
                         if (!Array.isArray(arrayToAdd)) {
                             throw new Error('Must be a valid array');
                         }
-                        return data.concat(arrayToAdd);
+                        return [...data, ...arrayToAdd];
                     } catch (error) {
                         throw new Error('Invalid array format: ' + error.message);
                     }
@@ -662,26 +833,61 @@
 
                 executeJoin(data, params) {
                     const { separator, sourceField } = params;
-                    const arrayToJoin = sourceField ? data.map(item => item[sourceField]) : data;
-                    return arrayToJoin.join(separator || ',');
+                    
+                    if (sourceField) {
+                        const values = data
+                            .map(item => item[sourceField])
+                            .filter(value => value !== undefined && value !== null);
+                        return values.join(separator || ',');
+                    } else {
+                        return data.map(item => JSON.stringify(item)).join(separator || ',');
+                    }
                 },
 
                 // Пересчет последующих шагов
                 recalculateSubsequentSteps(fromIndex) {
                     for (let i = fromIndex + 1; i < this.pipelineSteps.length; i++) {
-                        this.executeStep(i);
+                        const step = this.pipelineSteps[i];
+                        if (step.result !== null) {
+                            this.executeStep(i);
+                        }
                     }
                 },
 
                 // Полный пересчет пайплайна
                 recalculatePipeline() {
-                    this.currentResults = [JSON.parse(JSON.stringify(this.originalData))];
+                    let currentData = [...this.originalData];
                     
                     for (let i = 0; i < this.pipelineSteps.length; i++) {
-                        this.executeStep(i);
+                        const step = this.pipelineSteps[i];
+                        try {
+                            step.result = this.executeStepLogic(i, currentData);
+                            step.error = null;
+                            currentData = Array.isArray(step.result) ? [...step.result] : step.result;
+                        } catch (error) {
+                            step.result = null;
+                            step.error = error.message;
+                            break;
+                        }
                     }
                     
                     this.updatePipelineVisualization();
+                },
+
+                executeStepLogic(index, inputData) {
+                    const step = this.pipelineSteps[index];
+                    this.validateStepParameters(step);
+                    
+                    switch (step.method) {
+                        case 'map': return this.executeMap(inputData, step.parameters);
+                        case 'filter': return this.executeFilter(inputData, step.parameters);
+                        case 'reduce': return this.executeReduce(inputData, step.parameters);
+                        case 'flatMap': return this.executeFlatMap(inputData, step.parameters);
+                        case 'slice': return this.executeSlice(inputData, step.parameters);
+                        case 'concat': return this.executeConcat(inputData, step.parameters);
+                        case 'join': return this.executeJoin(inputData, step.parameters);
+                        default: throw new Error(`Unknown method: ${step.method}`);
+                    }
                 },
 
                 // Инициализация D3 визуализации
@@ -689,7 +895,7 @@
                     this.updatePipelineVisualization();
                 },
 
-                // Обновление D3 визуализации (исправленное выравнивание)
+                // Обновление D3 визуализации
                 updatePipelineVisualization() {
                     const container = document.getElementById('pipelineChart');
                     if (!container) return;
@@ -734,7 +940,7 @@
                     const nodeHeight = 60;
                     const horizontalSpacing = 40;
                     const totalWidth = nodes.length * (nodeWidth + horizontalSpacing) - horizontalSpacing;
-                    const startX = (width - totalWidth) / 2;
+                    const startX = Math.max(20, (width - totalWidth) / 2);
                     
                     let currentX = startX;
                     
@@ -779,7 +985,7 @@
                         const group = svg.append('g')
                             .attr('transform', `translate(${currentX}, ${y})`)
                             .attr('class', 'node')
-                            .style('cursor', 'pointer')
+                            .style('cursor', node.type === 'step' ? 'pointer' : 'default')
                             .on('click', () => {
                                 if (node.type === 'step') {
                                     const element = document.querySelector(`[x-data] .transformation-block:nth-child(${node.index + 1})`);
@@ -789,6 +995,10 @@
                                 }
                             });
                         
+                        // Цвет узла
+                        const nodeColor = node.type === 'source' ? '#28a745' : 
+                                         node.result === null ? '#6c757d' : '#007bff';
+                        
                         // Прямоугольник узла
                         group.append('rect')
                             .attr('width', nodeWidth)
@@ -796,7 +1006,7 @@
                             .attr('x', -nodeWidth / 2)
                             .attr('y', -nodeHeight / 2)
                             .attr('rx', 8)
-                            .attr('fill', node.type === 'source' ? '#28a745' : '#007bff')
+                            .attr('fill', nodeColor)
                             .attr('stroke', '#fff')
                             .attr('stroke-width', 2);
                         
@@ -844,6 +1054,34 @@
                     });
                 },
 
+                // Сохранение в историю
+                saveToHistory() {
+                    const state = {
+                        pipelineSteps: JSON.parse(JSON.stringify(this.pipelineSteps)),
+                        originalData: JSON.parse(JSON.stringify(this.originalData))
+                    };
+                    
+                    // Удаляем всё после текущего индекса
+                    if (this.historyIndex < this.history.length - 1) {
+                        this.history = this.history.slice(0, this.historyIndex + 1);
+                    }
+                    
+                    this.history.push(state);
+                    this.historyIndex = this.history.length - 1;
+                    this.isSaved = true;
+                },
+
+                // Восстановление из истории
+                restoreFromHistory() {
+                    if (this.historyIndex >= 0 && this.historyIndex < this.history.length) {
+                        const state = this.history[this.historyIndex];
+                        this.pipelineSteps = JSON.parse(JSON.stringify(state.pipelineSteps));
+                        this.originalData = JSON.parse(JSON.stringify(state.originalData));
+                        this.recalculatePipeline();
+                        this.updatePipelineVisualization();
+                    }
+                },
+
                 // Экспорт данных
                 exportData() {
                     const dataStr = JSON.stringify(this.currentData, null, 2);
@@ -852,7 +1090,9 @@
                     const a = document.createElement('a');
                     a.href = url;
                     a.download = 'transformed-data.json';
+                    document.body.appendChild(a);
                     a.click();
+                    document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                 },
 
@@ -868,7 +1108,8 @@
 
                 // Показать уведомление
                 showNotification(message, type = 'info') {
-                    // Создаем элемент уведомления
+                    const container = document.getElementById('notificationContainer');
+                    
                     const notification = document.createElement('div');
                     notification.className = `alert alert-${type === 'error' ? 'danger' : type} alert-dismissible fade show`;
                     notification.innerHTML = `
@@ -876,9 +1117,7 @@
                         <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
                     `;
                     
-                    // Добавляем в начало контейнера
-                    const container = document.querySelector('.container-sm');
-                    container.insertBefore(notification, container.firstChild);
+                    container.appendChild(notification);
                     
                     // Автоматически скрываем через 3 секунды
                     setTimeout(() => {
